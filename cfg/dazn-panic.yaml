@@ -1,0 +1,154 @@
+---
+# Source: mesh-sample-backend/charts/daznservice/templates/failoverscheme.yaml
+apiVersion: fed.solo.io/v1
+kind: FailoverScheme
+metadata:
+  name: mesh-sample-backend-apn1-mesh-sample-backend
+  namespace: default
+  labels:
+    helm.sh/chart: daznservice-3.0.2
+    app.kubernetes.io/name: daznservice
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  failoverGroups:
+    - priorityGroup:
+        - cluster: euc1
+          upstreams:
+            - name: mesh-sample-backend-euc1-mesh-sample-backend
+              namespace: default
+    - priorityGroup:
+        - cluster: use1
+          upstreams:
+            - name: mesh-sample-backend-use1-mesh-sample-backend
+              namespace: default
+  primary:
+    clusterName: apn1
+    name: mesh-sample-backend-apn1-mesh-sample-backend
+    namespace: default
+---
+# Source: mesh-sample-backend/charts/daznservice/templates/upstream.yaml
+apiVersion: gloo.solo.io/v1
+kind: Upstream
+metadata:
+  name: mesh-sample-backend-apn1-mesh-sample-backend
+  namespace: default
+  labels:
+    helm.sh/chart: daznservice-3.0.2
+    app.kubernetes.io/name: daznservice
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  circuitBreakers:
+    maxConnections: 20480
+    maxPendingRequests: 20490
+    maxRequests: 20480
+    maxRetries: 3
+  useHttp2: false
+  static:
+    useTls: false
+  healthChecks:
+    - interval: 5s
+      timeout: 2s
+      healthyThreshold: 3
+      unhealthyThreshold: 3
+      alwaysLogHealthCheckFailures: true
+      eventLogPath: /dev/stdout
+      httpHealthCheck:
+        path: /
+  static: 
+    hosts: 
+---
+# Source: mesh-sample-backend/charts/daznservice/templates/virtualservice.yaml
+apiVersion: gateway.solo.io/v1
+kind: VirtualService
+metadata:
+  name: mesh-sample-backend-apn1-https
+  namespace: default
+  labels:
+    helm.sh/chart: daznservice-3.0.2
+    app.kubernetes.io/name: daznservice
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  virtualHost:
+    domains:
+      - mesh-sample-backend.dev.gateway.transit.dazn-dev.com
+      - mesh-sample-backend-gwpag-hack.dev.gateway.transit.dazn-dev.com
+      - mesh-sample-backend-apn1-dev-gwpag-hack.dev.gateway.transit.dazn-dev.com
+    routes:
+      - matchers:
+        - prefix: /jwt/
+        routeAction:
+          single:
+            upstream:
+              name: mesh-sample-backend-apn1-mesh-sample-backend
+              namespace: default
+
+        options:
+          prefixRewrite: /
+          autoHostRewrite: true
+          jwt:
+            disable: false
+      - matchers:
+        - prefix: /jwt
+        routeAction:
+          single:
+            upstream:
+              name: mesh-sample-backend-apn1-mesh-sample-backend
+              namespace: default
+
+        options:
+          prefixRewrite: /
+          autoHostRewrite: true
+          jwt:
+            disable: false
+      - matchers:
+        - prefix: /
+        routeAction:
+          single:
+            upstream:
+              name: mesh-sample-backend-apn1-mesh-sample-backend
+              namespace: default
+
+        options:
+          prefixRewrite: /
+          autoHostRewrite: true
+          jwt:
+            disable: true
+    options:
+      jwt:
+        providers:
+          dazn-jwt:
+            claimsToHeaders:
+            - claim: user
+              header: x-dazn-user
+            issuer: dazn
+            jwks:
+              remote:
+                upstreamRef:
+                  name: jwks-test
+                  namespace: mesh-system
+                url: https://jwt.example.com/.well-known/jwks.json
+            tokenSource:
+              queryParams:
+                - token
+      transformations:
+        requestTransformation:
+          transformationTemplate:
+            passthrough: {}
+            headers:
+              dazn-client-ip:
+                text: '{{ header("x-envoy-external-address") }}'
+              dazn-gateway-region:
+                text: ap-northeast-1
+              x-correlation-id:
+                text: '{% if header("x-correlation-id") == "" %}{{ header("x-request-id") }}{% else %}{{ header("x-correlation-id") }}{% endif %}'
+  sslConfig:
+    secretRef:
+      name: gloo-ssl
+      namespace: mesh-system
+    sniDomains:
+      - mesh-sample-backend.dev.gateway.transit.dazn-dev.com
+      - mesh-sample-backend-gwpag-hack.dev.gateway.transit.dazn-dev.com
+      - mesh-sample-backend-apn1-dev-gwpag-hack.dev.gateway.transit.dazn-dev.com
